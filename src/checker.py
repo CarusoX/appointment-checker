@@ -10,12 +10,25 @@ logger = logging.getLogger(__name__)
 def parse_date(date_str: str) -> date | None:
     if not date_str:
         return None
-    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-        try:
-            return datetime.strptime(date_str.split(".")[0], "%Y-%m-%dT%H:%M:%S").date()
-        except ValueError:
-            continue
-    return None
+    # Strip fractional seconds and timezone offset to get clean datetime
+    clean = date_str.split(".")[0].split("+")[0]
+    # Handle negative UTC offsets like -03:00
+    # "2026-04-09T00:00:00-03:00" → find the T, then strip any -HH:MM after seconds
+    t_idx = clean.find("T")
+    if t_idx != -1:
+        time_part = clean[t_idx + 1:]
+        # If there's a - after the time (HH:MM:SS), it's a timezone
+        parts = time_part.split("-")
+        if len(parts) > 1:
+            clean = clean[:t_idx + 1] + parts[0]
+    try:
+        return datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S").date()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(clean, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None):
@@ -56,6 +69,7 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None)
 
         # Find doctor's specialty ID
         professionals = client.search_professional(doctor_name)
+        logger.debug(f"  Search results for {doctor_name}: {professionals}")
         # Match by resource ID and service
         match = next(
             (p for p in professionals
@@ -70,31 +84,52 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None)
             continue
 
         especialidad_id = match["IdEspecialidad"]
+        logger.debug(f"  Matched: especialidad={especialidad_id}, servicio={servicio_id}, sucursal={sucursal_id}")
 
         # Get prestaciones (e.g., CONSULTA)
         prestaciones = client.get_prestaciones(
             tipo_recurso, doctor_id, especialidad_id, servicio_id, sucursal_id,
         )
-        # Filter non-telemedicine prestaciones
-        prest_ids = [
-            p["Id"] for p in prestaciones
-            if not p.get("HabilitadaTelemedicina", False)
-        ]
-        if not prest_ids:
-            prest_ids = [prestaciones[0]["Id"]] if prestaciones else []
-        if not prest_ids:
-            logger.warning(f"No prestaciones found for {doctor_name}")
-            continue
+        logger.debug(f"  Prestaciones: {prestaciones}")
 
-        # Check first available slot
-        first = client.get_first_available(
-            id_servicio=servicio_id,
-            id_sucursal=sucursal_id,
-            id_recurso=doctor_id,
-            id_especialidad=especialidad_id,
-            id_tipo_recurso=tipo_recurso,
-            prestacion_ids=prest_ids,
-        )
+        # Match prestacion from the appointment
+        appt_prestacion = appt.get("PrestacionesConcatenadas", "").strip().upper()
+        matched_prest = [
+            p["Id"] for p in prestaciones
+            if p["Nombre"].strip().upper() == appt_prestacion
+            and not p.get("HabilitadaTelemedicina", False)
+        ]
+
+        if matched_prest:
+            prest_combos = [matched_prest]
+            logger.debug(f"  Matched prestacion '{appt_prestacion}' -> {matched_prest}")
+        else:
+            # Fallback: try each non-telemedicine prestacion individually
+            non_tele = [
+                p["Id"] for p in prestaciones
+                if not p.get("HabilitadaTelemedicina", False)
+            ]
+            if not non_tele:
+                non_tele = [prestaciones[0]["Id"]] if prestaciones else []
+            if not non_tele:
+                logger.warning(f"No prestaciones found for {doctor_name}")
+                continue
+            prest_combos = [[pid] for pid in non_tele]
+            logger.debug(f"  No exact prestacion match for '{appt_prestacion}', trying each: {prest_combos}")
+        first = None
+        for combo in prest_combos:
+            logger.debug(f"  Trying availability: recurso={doctor_id}, especialidad={especialidad_id}, "
+                         f"servicio={servicio_id}, sucursal={sucursal_id}, prestaciones={combo}")
+            first = client.get_first_available(
+                id_servicio=servicio_id,
+                id_sucursal=sucursal_id,
+                id_recurso=doctor_id,
+                id_especialidad=especialidad_id,
+                id_tipo_recurso=tipo_recurso,
+                prestacion_ids=combo,
+            )
+            if first:
+                break
 
         if not first:
             logger.info(f"  No available slots for {doctor_name}")

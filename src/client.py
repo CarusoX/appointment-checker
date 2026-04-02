@@ -11,9 +11,6 @@ API_URL = f"{BASE_URL}/api/"
 TOKEN_URL = f"{BASE_URL}/Token"
 SISTEMA = base64.b64encode(b"app-portal-paciente").decode()
 
-SEX_MAP = {1: "F", 4: "M"}
-
-
 class SanatorioClient:
     def __init__(self, dni: str, password: str):
         self.dni = dni
@@ -82,7 +79,8 @@ class SanatorioClient:
         paciente = info["Paciente"]
         self.patient_id = paciente["Id"]
         self.patient_age = paciente["Edad"]
-        self.patient_sex = SEX_MAP.get(paciente["IdSexo"], "M")
+        sexo = paciente.get("Sexo", "")
+        self.patient_sex = sexo[0].upper() if sexo else "M"
         logger.info(f"Patient: {paciente['NombrePaciente']} (ID {self.patient_id})")
 
         coverages = self._get(f"Cobertura/ObtenerPorIdPaciente/{self.patient_id}")
@@ -153,9 +151,16 @@ class SanatorioClient:
             "IdSistemaCliente": 2,
             "IdTipoBusqueda": 1,
         }
-        data = self._post(
-            "DisponibilidadDeTurnos/ObtenerPrimerTurnoAsignableParaPortalWebConParticular",
+        resp = self.session.post(
+            f"{API_URL}DisponibilidadDeTurnos/ObtenerPrimerTurnoAsignableParaPortalWebConParticular",
             json=payload,
         )
+        logger.debug(f"  Availability response ({resp.status_code}): {resp.text[:1000]}")
+        resp.raise_for_status()
+        data = resp.json()
         slots = data.get("PrimerosTurnosDeCadaRecurso", [])
+        if not slots:
+            msgs = data.get("MensajesValidacion", [])
+            if msgs:
+                logger.info(f"  Validation messages: {msgs}")
         return slots[0] if slots else None
