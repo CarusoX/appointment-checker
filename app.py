@@ -1,19 +1,20 @@
 """
 Flask app for Render free tier.
 /check — triggers the appointment checker
-/telegram-webhook — handles Telegram button callbacks
+/telegram-webhook — handles Telegram bot commands and registration
 /setup-webhook — one-time setup for Telegram webhook
 """
 
-import json
 import logging
 import os
 
 import requests as http_requests
 from flask import Flask, jsonify, request
 
+from src.bot_handler import handle_update
 from src.checker import run_check
 from src.client import SanatorioClient
+from src.crypto import decrypt_password
 from src.notifier import TelegramNotifier
 from src.storage import Storage
 
@@ -42,24 +43,28 @@ def health():
 @app.route("/check")
 def check():
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    users_json = os.getenv("USERS")
+    encryption_key = os.getenv("ENCRYPTION_KEY")
     dry = request.args.get("dry") == "true"
-
-    if not users_json:
-        return jsonify({"error": "USERS not configured"}), 500
-
-    users = json.loads(users_json)
     storage = get_storage()
+
+    if not storage or not encryption_key:
+        return jsonify({"error": "Storage or encryption not configured"}), 500
+
+    users = storage.get_all_users()
     results = []
 
     for user in users:
-        name = user.get("name", user["dni"])
+        chat_id = user["chat_id"]
+        dni = user["dni"]
+        name = user.get("name") or dni
+
         try:
-            client = SanatorioClient(user["dni"], user["password"])
+            raw_password = decrypt_password(user["encrypted_password"], encryption_key)
+            client = SanatorioClient(dni, raw_password)
 
             notifier = None
-            if not dry and bot_token and user.get("chat_id"):
-                notifier = TelegramNotifier(bot_token, user["chat_id"], storage)
+            if not dry and bot_token:
+                notifier = TelegramNotifier(bot_token, chat_id, storage)
 
             findings = run_check(client, notifier, storage)
             results.append({"user": name, "findings": findings})
@@ -72,6 +77,20 @@ def check():
 
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
+    update = request.get_json(silent=True)
+    if not update:
+        return jsonify({"ok": True})
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    encryption_key = os.getenv("ENCRYPTION_KEY")
+    storage = get_storage()
+
+    if bot_token and encryption_key and storage:
+        try:
+            handle_update(update, storage, bot_token, encryption_key)
+        except Exception as e:
+            logger.error(f"Webhook error: {e}")
+
     return jsonify({"ok": True})
 
 

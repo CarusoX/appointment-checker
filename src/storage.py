@@ -44,3 +44,57 @@ class Storage:
             logger.debug("Already dismissed")
         elif not resp.ok:
             logger.error(f"Failed to dismiss: {resp.text}")
+
+    # ── User management ──
+
+    def get_all_users(self) -> list[dict]:
+        resp = requests.get(
+            f"{self.url}/users",
+            params={"select": "chat_id,dni,encrypted_password,name"},
+            headers=self.headers,
+        )
+        if not resp.ok:
+            logger.error(f"Failed to fetch users: {resp.text}")
+            return []
+        return resp.json()
+
+    def get_user(self, chat_id: str) -> dict | None:
+        resp = requests.get(
+            f"{self.url}/users",
+            params={"chat_id": f"eq.{chat_id}", "select": "*"},
+            headers=self.headers,
+        )
+        if not resp.ok:
+            logger.error(f"Failed to fetch user: {resp.text}")
+            return None
+        rows = resp.json()
+        return rows[0] if rows else None
+
+    def upsert_user(self, chat_id: str, dni: str, encrypted_password: str,
+                    name: str | None = None):
+        resp = requests.post(
+            f"{self.url}/users",
+            json={
+                "chat_id": chat_id,
+                "dni": dni,
+                "encrypted_password": encrypted_password,
+                "name": name,
+            },
+            headers={
+                **self.headers,
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            },
+        )
+        if not resp.ok:
+            logger.error(f"Failed to upsert user: {resp.text}")
+
+    def delete_user(self, chat_id: str) -> bool:
+        resp = requests.delete(
+            f"{self.url}/users",
+            params={"chat_id": f"eq.{chat_id}"},
+            headers=self.headers,
+        )
+        if not resp.ok:
+            logger.error(f"Failed to delete user: {resp.text}")
+            return False
+        return True

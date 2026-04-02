@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 from src.checker import run_check
 from src.client import SanatorioClient
+from src.crypto import decrypt_password
 from src.notifier import TelegramNotifier
 from src.storage import Storage
 
@@ -26,22 +27,40 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def load_users(storage: Storage | None) -> list[dict]:
+    """Load users from USERS env var (legacy) or Supabase."""
+    users_json = os.getenv("USERS")
+    if users_json:
+        return json.loads(users_json)
+
+    encryption_key = os.getenv("ENCRYPTION_KEY")
+    if storage and encryption_key:
+        db_users = storage.get_all_users()
+        return [
+            {
+                "name": u.get("name") or u["dni"],
+                "dni": u["dni"],
+                "password": decrypt_password(u["encrypted_password"], encryption_key),
+                "chat_id": u["chat_id"],
+            }
+            for u in db_users
+        ]
+
+    print("Set USERS in .env or configure SUPABASE + ENCRYPTION_KEY")
+    sys.exit(1)
+
+
 def main():
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    users_json = os.getenv("USERS")
     dry = "--dry" in sys.argv
-
-    if not users_json:
-        print("Set USERS in .env (JSON array). See .env.example")
-        sys.exit(1)
-
-    users = json.loads(users_json)
 
     storage = None
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_key = os.getenv("SUPABASE_KEY")
     if supabase_url and supabase_key:
         storage = Storage(supabase_url, supabase_key)
+
+    users = load_users(storage)
 
     for user in users:
         name = user.get("name", user["dni"])
