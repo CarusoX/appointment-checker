@@ -12,8 +12,11 @@ logger = logging.getLogger(__name__)
 
 # In-memory conversation state: {chat_id: {"step": ..., "dni": ..., "timestamp": ...}}
 _conversations: dict[str, dict] = {}
+_conversations_lock = threading.Lock()
 
 STATE_TIMEOUT = 300  # 5 minutes
+MAX_DNI_LENGTH = 10
+MAX_PASSWORD_LENGTH = 128
 
 
 def _send_message(bot_token: str, chat_id: str, text: str):
@@ -22,7 +25,7 @@ def _send_message(bot_token: str, chat_id: str, text: str):
         json={"chat_id": chat_id, "text": text},
     )
     if not resp.ok:
-        logger.error(f"Failed to send message: {resp.text}")
+        logger.error(f"Failed to send message: {resp.status_code}")
 
 
 def _delete_message(bot_token: str, chat_id: str, message_id: int):
@@ -45,14 +48,17 @@ def handle_update(update: dict, storage: Storage, bot_token: str,
     message_id = message["message_id"]
     first_name = message["chat"].get("first_name", "")
 
-    # Check for stale conversation state
-    if chat_id in _conversations:
-        if time.time() - _conversations[chat_id]["timestamp"] > STATE_TIMEOUT:
-            del _conversations[chat_id]
+    # Clean up stale conversation states
+    with _conversations_lock:
+        stale = [k for k, v in _conversations.items()
+                 if time.time() - v["timestamp"] > STATE_TIMEOUT]
+        for k in stale:
+            del _conversations[k]
 
     # Command dispatch
     if text.startswith("/agregar"):
-        _conversations[chat_id] = {"step": "awaiting_dni", "timestamp": time.time()}
+        with _conversations_lock:
+            _conversations[chat_id] = {"step": "awaiting_dni", "timestamp": time.time()}
         _send_message(bot_token, chat_id, "Ingresa tu DNI (solo numeros):")
         return
 
@@ -62,29 +68,35 @@ def handle_update(update: dict, storage: Storage, bot_token: str,
             _send_message(bot_token, chat_id,
                           "No hay cuentas registradas. Usa /agregar para registrarte.")
             return
-        # /eliminar <DNI> — delete specific account
+        # /eliminar <index> — delete specific account by index
         parts = text.split()
-        if len(parts) >= 2:
-            dni = parts[1].replace(".", "").replace(" ", "")
-            if any(u["dni"] == dni for u in users):
+        if len(parts) >= 2 and parts[1].isdigit():
+            idx = int(parts[1]) - 1
+            if 0 <= idx < len(users):
+                dni = users[idx]["dni"]
+                masked = dni[:2] + "*" * (len(dni) - 4) + dni[-2:]
                 storage.delete_user(chat_id, dni)
                 _send_message(bot_token, chat_id,
-                              f"Cuenta con DNI {dni} eliminada.")
+                              f"Cuenta con DNI {masked} eliminada.")
             else:
                 _send_message(bot_token, chat_id,
-                              f"No tenes una cuenta con DNI {dni}.")
+                              "Numero invalido. Usa /eliminar para ver las opciones.")
             return
         # /eliminar without args
         if len(users) == 1:
-            storage.delete_user(chat_id, users[0]["dni"])
+            dni = users[0]["dni"]
+            masked = dni[:2] + "*" * (len(dni) - 4) + dni[-2:]
+            storage.delete_user(chat_id, dni)
             _send_message(bot_token, chat_id,
-                          "Tu cuenta fue eliminada. Podes volver a registrarte con /agregar.")
+                          f"Tu cuenta ({masked}) fue eliminada. Podes volver a registrarte con /agregar.")
         else:
             lines = ["Tenes varias cuentas. Indica cual eliminar:"]
-            for u in users:
+            for i, u in enumerate(users, 1):
                 dni = u["dni"]
                 masked = dni[:2] + "*" * (len(dni) - 4) + dni[-2:]
-                lines.append(f"  /eliminar {dni}  ({masked})")
+                name = u.get("name") or ""
+                label = f"{masked}" + (f" ({name})" if name else "")
+                lines.append(f"  /eliminar {i}  — {label}")
             _send_message(bot_token, chat_id, "\n".join(lines))
         return
 
@@ -116,26 +128,37 @@ def handle_update(update: dict, storage: Storage, bot_token: str,
         return
 
     # Handle conversation steps
-    state = _conversations.get(chat_id)
-    if not state:
-        return
+    with _conversations_lock:
+        state = _conversations.get(chat_id)
+        if not state:
+            return
+        step = state["step"]
 
-    if state["step"] == "awaiting_dni":
+    if step == "awaiting_dni":
         dni = text.replace(".", "").replace(" ", "")
-        if not dni.isdigit():
-            _send_message(bot_token, chat_id, "El DNI debe ser solo numeros. Intenta de nuevo:")
+        if not dni.isdigit() or len(dni) > MAX_DNI_LENGTH:
+            _send_message(bot_token, chat_id, "El DNI debe ser solo numeros (maximo 10 digitos). Intenta de nuevo:")
             return
         _delete_message(bot_token, chat_id, message_id)
-        state["dni"] = dni
-        state["step"] = "awaiting_password"
-        state["timestamp"] = time.time()
+        with _conversations_lock:
+            if chat_id not in _conversations:
+                return
+            _conversations[chat_id]["dni"] = dni
+            _conversations[chat_id]["step"] = "awaiting_password"
+            _conversations[chat_id]["timestamp"] = time.time()
         _send_message(bot_token, chat_id, "Ingresa tu contrasena del portal:")
         return
 
-    if state["step"] == "awaiting_password":
+    if step == "awaiting_password":
+        if len(text) > MAX_PASSWORD_LENGTH:
+            _send_message(bot_token, chat_id, "Contrasena demasiado larga. Intenta de nuevo:")
+            return
+        with _conversations_lock:
+            state = _conversations.pop(chat_id, None)
+            if not state:
+                return
         raw_password = text
         dni = state["dni"]
-        del _conversations[chat_id]
 
         # Delete the password message from chat
         _delete_message(bot_token, chat_id, message_id)

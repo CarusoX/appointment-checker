@@ -3,7 +3,7 @@ services:
     name: appointment-checker
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --workers 1 --timeout 120
     plan: free
     envVars:
       - key: TELEGRAM_BOT_TOKEN

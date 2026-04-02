@@ -25,7 +25,7 @@ class Storage:
             headers=self.headers,
         )
         if not resp.ok:
-            logger.error(f"Failed to fetch dismissed: {resp.text}")
+            logger.error(f"Failed to fetch dismissed: {resp.status_code}")
             return set()
         return {r["dismissed_date"] for r in resp.json() if r.get("dismissed_date")}
 
@@ -43,7 +43,7 @@ class Storage:
         if resp.status_code == 409:
             logger.debug("Already dismissed")
         elif not resp.ok:
-            logger.error(f"Failed to dismiss: {resp.text}")
+            logger.error(f"Failed to dismiss: {resp.status_code}")
 
     # ── User management ──
 
@@ -54,18 +54,18 @@ class Storage:
             headers=self.headers,
         )
         if not resp.ok:
-            logger.error(f"Failed to fetch users: {resp.text}")
+            logger.error(f"Failed to fetch users: {resp.status_code}")
             return []
         return resp.json()
 
     def get_users_by_chat(self, chat_id: str) -> list[dict]:
         resp = requests.get(
             f"{self.url}/users",
-            params={"chat_id": f"eq.{chat_id}", "select": "*"},
+            params={"chat_id": f"eq.{chat_id}", "select": "chat_id,dni,encrypted_password,name"},
             headers=self.headers,
         )
         if not resp.ok:
-            logger.error(f"Failed to fetch users: {resp.text}")
+            logger.error(f"Failed to fetch users: {resp.status_code}")
             return []
         return resp.json()
 
@@ -85,7 +85,7 @@ class Storage:
             },
         )
         if not resp.ok:
-            logger.error(f"Failed to upsert user: {resp.text}")
+            logger.error(f"Failed to upsert user: {resp.status_code}")
 
     def delete_user(self, chat_id: str, dni: str) -> bool:
         resp = requests.delete(
@@ -94,6 +94,6 @@ class Storage:
             headers=self.headers,
         )
         if not resp.ok:
-            logger.error(f"Failed to delete user: {resp.text}")
+            logger.error(f"Failed to delete user: {resp.status_code}")
             return False
         return True

@@ -39,6 +39,7 @@ def set_security_headers(response):
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy"] = "default-src 'none'"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
     return response
 
 
@@ -110,10 +111,12 @@ def check():
 def telegram_webhook():
     # Verify Telegram secret token
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-    if webhook_secret:
-        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not secrets.compare_digest(provided, webhook_secret):
-            return jsonify({"ok": False}), 403
+    if not webhook_secret:
+        logger.error("TELEGRAM_WEBHOOK_SECRET is not configured")
+        return jsonify({"ok": False}), 500
+    provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secrets.compare_digest(provided, webhook_secret):
+        return jsonify({"ok": False}), 403
 
     update = request.get_json(silent=True)
     if not update:
