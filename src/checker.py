@@ -3,6 +3,7 @@ from datetime import datetime, date
 
 from src.client import SanatorioClient
 from src.notifier import TelegramNotifier
+from src.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,8 @@ def parse_date(date_str: str) -> date | None:
         return None
 
 
-def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None):
+def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None,
+              storage: Storage | None = None):
     """Main check: get appointments, look for earlier availability, notify if found."""
     client.login()
     client.load_patient_info()
@@ -43,9 +45,21 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None)
         logger.info("No upcoming appointments to check")
         return []
 
+    # Load dismissed appointments for this user's chat
+    dismissed_ids = set()
+    if storage and notifier:
+        dismissed_ids = storage.get_dismissed_ids(notifier.chat_id)
+        if dismissed_ids:
+            logger.info(f"Dismissed appointment IDs: {dismissed_ids}")
+
     findings = []
 
     for appt in appointments:
+        appt_id = appt["Id"]
+
+        if appt_id in dismissed_ids:
+            logger.info(f"Skipping dismissed appointment {appt_id}")
+            continue
         doctor_name = appt["Recurso"]
         doctor_id = appt["IdRecurso"]
         tipo_recurso = appt["IdTipoRecurso"]
@@ -162,6 +176,7 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None)
                     current_date=appt_date.strftime("%d/%m/%Y"),
                     new_date=first_date.strftime("%d/%m/%Y"),
                     new_time=first_time,
+                    appointment_id=appt_id,
                 )
         else:
             logger.info(f"  No earlier date available (first is {first_date})")

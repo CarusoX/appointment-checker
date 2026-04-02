@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from src.checker import run_check
 from src.client import SanatorioClient
 from src.notifier import TelegramNotifier
+from src.storage import Storage
 
 load_dotenv()
 logging.basicConfig(
@@ -36,6 +37,12 @@ def main():
 
     users = json.loads(users_json)
 
+    storage = None
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    if supabase_url and supabase_key:
+        storage = Storage(supabase_url, supabase_key)
+
     for user in users:
         name = user.get("name", user["dni"])
         logger.info(f"{'='*40}")
@@ -49,7 +56,7 @@ def main():
             if not dry and bot_token and user.get("chat_id"):
                 notifier = TelegramNotifier(bot_token, user["chat_id"])
 
-            findings = run_check(client, notifier)
+            findings = run_check(client, notifier, storage)
 
             if findings:
                 print(f"\n{name}: Found {len(findings)} earlier slot(s):")
