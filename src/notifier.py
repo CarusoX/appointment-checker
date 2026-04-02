@@ -42,16 +42,13 @@ class TelegramNotifier:
 
         available_days: list of {'date': 'YYYY-MM-DD', 'times': ['HH:MM', ...]}
         """
-        lines = [
-            f"*Turnos anteriores disponibles!*\n",
-        ]
+        lines = [f"*Turnos anteriores disponibles!*\n"]
         if patient_name:
             lines.append(f"Paciente: {patient_name}")
         lines.append(f"Doctor: {doctor}")
-            f"{service} @ {location}",
-            f"Tu turno actual: {current_date.strftime('%d/%m/%Y')} {current_time}",
-            "",
-        ]
+        lines.append(f"{service} @ {location}")
+        lines.append(f"Tu turno actual: {current_date.strftime('%d/%m/%Y')} {current_time}")
+        lines.append("")
 
         for day in available_days:
             d = date.fromisoformat(day["date"])
