@@ -78,6 +78,7 @@ class SanatorioClient:
         info = self._get("Usuario/GetInfoSeguridadCurrentUser/")
         paciente = info["Paciente"]
         self.patient_id = paciente["Id"]
+        self.patient_name = paciente.get("NombrePaciente", "")
         self.patient_age = paciente["Edad"]
         sexo = paciente.get("Sexo", "")
         self.patient_sex = sexo[0].upper() if sexo else "M"

@@ -204,6 +204,7 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None,
                 current_time=appt_time,
                 available_days=available,
                 appointment_id=appt_id,
+                patient_name=client.patient_name,
             )
 
     if not findings:

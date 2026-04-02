@@ -58,17 +58,16 @@ class Storage:
             return []
         return resp.json()
 
-    def get_user(self, chat_id: str) -> dict | None:
+    def get_users_by_chat(self, chat_id: str) -> list[dict]:
         resp = requests.get(
             f"{self.url}/users",
             params={"chat_id": f"eq.{chat_id}", "select": "*"},
             headers=self.headers,
         )
         if not resp.ok:
-            logger.error(f"Failed to fetch user: {resp.text}")
-            return None
-        rows = resp.json()
-        return rows[0] if rows else None
+            logger.error(f"Failed to fetch users: {resp.text}")
+            return []
+        return resp.json()
 
     def upsert_user(self, chat_id: str, dni: str, encrypted_password: str,
                     name: str | None = None):
@@ -88,10 +87,10 @@ class Storage:
         if not resp.ok:
             logger.error(f"Failed to upsert user: {resp.text}")
 
-    def delete_user(self, chat_id: str) -> bool:
+    def delete_user(self, chat_id: str, dni: str) -> bool:
         resp = requests.delete(
             f"{self.url}/users",
-            params={"chat_id": f"eq.{chat_id}"},
+            params={"chat_id": f"eq.{chat_id}", "dni": f"eq.{dni}"},
             headers=self.headers,
         )
         if not resp.ok:

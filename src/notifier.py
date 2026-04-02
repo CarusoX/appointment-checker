@@ -36,14 +36,18 @@ class TelegramNotifier:
     def send_available_slots(self, doctor: str, service: str, location: str,
                              current_date: date, current_time: str,
                              available_days: list[dict],
-                             appointment_id: int):
+                             appointment_id: int,
+                             patient_name: str = ""):
         """Send notification with all available earlier slots grouped by day.
 
         available_days: list of {'date': 'YYYY-MM-DD', 'times': ['HH:MM', ...]}
         """
         lines = [
             f"*Turnos anteriores disponibles!*\n",
-            f"Doctor: {doctor}",
+        ]
+        if patient_name:
+            lines.append(f"Paciente: {patient_name}")
+        lines.append(f"Doctor: {doctor}")
             f"{service} @ {location}",
             f"Tu turno actual: {current_date.strftime('%d/%m/%Y')} {current_time}",
             "",

@@ -56,25 +56,54 @@ def handle_update(update: dict, storage: Storage, bot_token: str,
         return
 
     if text.startswith("/eliminar"):
-        user = storage.get_user(chat_id)
-        if not user:
+        users = storage.get_users_by_chat(chat_id)
+        if not users:
             _send_message(bot_token, chat_id,
-                          "No estas registrado. Usa /agregar para registrarte.")
+                          "No hay cuentas registradas. Usa /agregar para registrarte.")
             return
-        storage.delete_user(chat_id)
-        _send_message(bot_token, chat_id,
-                      "Tu cuenta fue eliminada. Podes volver a registrarte con /agregar.")
+        # /eliminar <DNI> — delete specific account
+        parts = text.split()
+        if len(parts) >= 2:
+            dni = parts[1].replace(".", "").replace(" ", "")
+            if any(u["dni"] == dni for u in users):
+                storage.delete_user(chat_id, dni)
+                _send_message(bot_token, chat_id,
+                              f"Cuenta con DNI {dni} eliminada.")
+            else:
+                _send_message(bot_token, chat_id,
+                              f"No tenes una cuenta con DNI {dni}.")
+            return
+        # /eliminar without args
+        if len(users) == 1:
+            storage.delete_user(chat_id, users[0]["dni"])
+            _send_message(bot_token, chat_id,
+                          "Tu cuenta fue eliminada. Podes volver a registrarte con /agregar.")
+        else:
+            lines = ["Tenes varias cuentas. Indica cual eliminar:"]
+            for u in users:
+                dni = u["dni"]
+                masked = dni[:2] + "*" * (len(dni) - 4) + dni[-2:]
+                lines.append(f"  /eliminar {dni}  ({masked})")
+            _send_message(bot_token, chat_id, "\n".join(lines))
         return
 
     if text.startswith("/estado"):
-        user = storage.get_user(chat_id)
-        if not user:
+        users = storage.get_users_by_chat(chat_id)
+        if not users:
             _send_message(bot_token, chat_id,
-                          "No estas registrado. Usa /agregar para registrarte.")
-        else:
-            dni = user["dni"]
+                          "No hay cuentas registradas. Usa /agregar para registrarte.")
+        elif len(users) == 1:
+            dni = users[0]["dni"]
             masked = dni[:2] + "*" * (len(dni) - 4) + dni[-2:]
             _send_message(bot_token, chat_id, f"Registrado con DNI: {masked}")
+        else:
+            lines = ["Cuentas registradas:"]
+            for u in users:
+                dni = u["dni"]
+                masked = dni[:2] + "*" * (len(dni) - 4) + dni[-2:]
+                name = u.get("name") or ""
+                lines.append(f"  {masked}" + (f" ({name})" if name else ""))
+            _send_message(bot_token, chat_id, "\n".join(lines))
         return
 
     if text.startswith("/ayuda") or text.startswith("/start") or text.startswith("/help"):
@@ -95,6 +124,7 @@ def handle_update(update: dict, storage: Storage, bot_token: str,
         if not dni.isdigit():
             _send_message(bot_token, chat_id, "El DNI debe ser solo numeros. Intenta de nuevo:")
             return
+        _delete_message(bot_token, chat_id, message_id)
         state["dni"] = dni
         state["step"] = "awaiting_password"
         state["timestamp"] = time.time()
