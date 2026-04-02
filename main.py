@@ -54,14 +54,16 @@ def main():
 
             notifier = None
             if not dry and bot_token and user.get("chat_id"):
-                notifier = TelegramNotifier(bot_token, user["chat_id"])
+                notifier = TelegramNotifier(bot_token, user["chat_id"], storage)
 
             findings = run_check(client, notifier, storage)
 
             if findings:
                 print(f"\n{name}: Found {len(findings)} earlier slot(s):")
                 for f in findings:
-                    print(f"  {f['doctor']}: {f['current_date']} -> {f['new_date']} {f.get('new_time', '')}")
+                    days = f["available_days"]
+                    days_str = ", ".join(f"{d['date']} ({', '.join(d['times'])})" for d in days)
+                    print(f"  {f['doctor']}: current {f['current_date']} -> {days_str}")
             else:
                 print(f"{name}: No earlier appointments available right now.")
 

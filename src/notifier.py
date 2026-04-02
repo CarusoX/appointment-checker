@@ -3,6 +3,8 @@ from datetime import date
 
 import requests
 
+from src.storage import Storage
+
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}"
@@ -11,9 +13,10 @@ DIAS = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
 
 
 class TelegramNotifier:
-    def __init__(self, bot_token: str, chat_id: str):
+    def __init__(self, bot_token: str, chat_id: str, storage: Storage | None = None):
         self.bot_token = bot_token
         self.chat_id = chat_id
+        self.storage = storage
         self.api = TELEGRAM_API.format(token=bot_token)
 
     def send(self, message: str, reply_markup: dict | None = None):
@@ -50,8 +53,11 @@ class TelegramNotifier:
             d = date.fromisoformat(day["date"])
             dia = DIAS[d.weekday()]
             fecha_str = d.strftime("%d/%m")
-            times_str = ", ".join(day["times"])
-            lines.append(f"{dia} {fecha_str} — {times_str}")
+            hours = sorted(set(t.split(":")[0] for t in day["times"]))
+            if len(hours) == 1:
+                lines.append(f"{dia} {fecha_str} — {hours[0]}hs")
+            else:
+                lines.append(f"{dia} {fecha_str} — {hours[0]} a {hours[-1]}hs")
 
         lines.append("")
         lines.append(
@@ -61,11 +67,9 @@ class TelegramNotifier:
 
         msg = "\n".join(lines)
 
-        # Encode all dates into callback data: "d:{appt_id}:{date1},{date2},..."
-        all_dates = ",".join(day["date"] for day in available_days)
-        reply_markup = {
-            "inline_keyboard": [[
-                {"text": "Ignorar turnos", "callback_data": f"d:{appointment_id}:{all_dates}"},
-            ]]
-        }
-        return self.send(msg, reply_markup=reply_markup)
+        # Pre-dismiss all shown dates so they won't re-notify
+        if self.storage:
+            for day in available_days:
+                self.storage.dismiss_date(self.chat_id, appointment_id, day["date"])
+
+        return self.send(msg)

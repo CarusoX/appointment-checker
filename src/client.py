@@ -227,14 +227,18 @@ class SanatorioClient:
         resp.raise_for_status()
         data = resp.json()
 
-        result = []
+        by_date = {}
         for resource in data:
             for day in resource.get("SituacionesPorDia", []):
                 slots = day.get("TurnosAsignables", [])
                 if not slots:
                     continue
                 fecha = day["Fecha"].split("T")[0]
-                times = sorted(set(s["Hora"] for s in slots))
-                result.append({"date": fecha, "times": times})
+                times = by_date.setdefault(fecha, set())
+                for s in slots:
+                    times.add(s["Hora"])
 
-        return sorted(result, key=lambda d: d["date"])
+        return sorted(
+            [{"date": d, "times": sorted(t)} for d, t in by_date.items()],
+            key=lambda d: d["date"],
+        )
