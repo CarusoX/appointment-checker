@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 
 import requests
@@ -134,28 +135,36 @@ def handle_update(update: dict, storage: Storage, bot_token: str,
     if state["step"] == "awaiting_password":
         raw_password = text
         dni = state["dni"]
+        del _conversations[chat_id]
 
         # Delete the password message from chat
         _delete_message(bot_token, chat_id, message_id)
 
-        _send_message(bot_token, chat_id, "Verificando credenciales...")
+        # Validate and store in background so the webhook responds fast
+        threading.Thread(
+            target=_validate_and_store,
+            args=(bot_token, chat_id, dni, raw_password, encryption_key,
+                  storage, first_name),
+            daemon=True,
+        ).start()
 
-        # Validate credentials
-        try:
-            client = SanatorioClient(dni, raw_password)
-            client.login()
-        except Exception:
-            _send_message(bot_token, chat_id,
-                          "Credenciales invalidas. Verifica tu DNI y contrasena "
-                          "e intenta de nuevo con /agregar")
-            del _conversations[chat_id]
-            return
 
-        # Encrypt and store
-        encrypted = encrypt_password(raw_password, encryption_key)
-        storage.upsert_user(chat_id, dni, encrypted, name=first_name or None)
-
+def _validate_and_store(bot_token: str, chat_id: str, dni: str,
+                        raw_password: str, encryption_key: str,
+                        storage: Storage, name: str):
+    _send_message(bot_token, chat_id, "Verificando credenciales...")
+    try:
+        client = SanatorioClient(dni, raw_password)
+        client.login()
+    except Exception:
         _send_message(bot_token, chat_id,
-                      "Registrado! Voy a revisar tus turnos periodicamente "
-                      "y te aviso si hay turnos mas tempranos.")
-        del _conversations[chat_id]
+                      "Credenciales invalidas. Verifica tu DNI y contrasena "
+                      "e intenta de nuevo con /agregar")
+        return
+
+    encrypted = encrypt_password(raw_password, encryption_key)
+    storage.upsert_user(chat_id, dni, encrypted, name=name or None)
+
+    _send_message(bot_token, chat_id,
+                  "Registrado! Voy a revisar tus turnos periodicamente "
+                  "y te aviso si hay turnos mas tempranos.")
