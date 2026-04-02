@@ -85,11 +85,16 @@ def telegram_webhook():
     encryption_key = os.getenv("ENCRYPTION_KEY")
     storage = get_storage()
 
-    if bot_token and encryption_key and storage:
-        try:
-            handle_update(update, storage, bot_token, encryption_key)
-        except Exception as e:
-            logger.error(f"Webhook error: {e}")
+    logger.info(f"Webhook update: {update}")
+
+    if not bot_token or not encryption_key or not storage:
+        logger.error(f"Missing config: bot_token={bool(bot_token)}, encryption_key={bool(encryption_key)}, storage={bool(storage)}")
+        return jsonify({"ok": True})
+
+    try:
+        handle_update(update, storage, bot_token, encryption_key)
+    except Exception:
+        logger.exception("Webhook error")
 
     return jsonify({"ok": True})
 
