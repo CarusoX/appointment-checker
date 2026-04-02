@@ -85,41 +85,32 @@ def telegram_webhook():
     message_id = callback["message"]["message_id"]
     callback_data = callback.get("data", "")
 
-    action, _, appt_id_str = callback_data.partition(":")
-    if not appt_id_str:
+    # Format: "d:{appt_id}:{date1},{date2},..."
+    parts = callback_data.split(":", 2)
+    if len(parts) < 3 or parts[0] != "d":
         return jsonify({"ok": True})
 
-    appt_id = int(appt_id_str)
+    appt_id = int(parts[1])
+    dates = parts[2].split(",")
 
-    if action == "dismiss":
-        storage = get_storage()
-        if storage:
-            storage.dismiss(chat_id, appt_id)
+    storage = get_storage()
+    if storage:
+        for dismissed_date in dates:
+            storage.dismiss_date(chat_id, appt_id, dismissed_date)
 
-        http_requests.post(f"{api}/answerCallbackQuery", json={
-            "callback_query_id": callback_id,
-            "text": "Ignorado. No se notificara mas sobre este turno.",
-        })
-        # Update message to show it was dismissed
-        original_text = callback["message"].get("text", "")
-        http_requests.post(f"{api}/editMessageText", json={
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "text": original_text + "\n\n~Ignorado~",
-            "parse_mode": "Markdown",
-        })
+    http_requests.post(f"{api}/answerCallbackQuery", json={
+        "callback_query_id": callback_id,
+        "text": "Ignorado. No se notificara mas sobre estas fechas.",
+    })
 
-    elif action == "interested":
-        http_requests.post(f"{api}/answerCallbackQuery", json={
-            "callback_query_id": callback_id,
-            "text": "Ingresa al portal para reprogramar!",
-        })
-        # Remove buttons
-        http_requests.post(f"{api}/editMessageReplyMarkup", json={
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "reply_markup": {"inline_keyboard": []},
-        })
+    # Update message to show it was dismissed, remove buttons
+    original_text = callback["message"].get("text", "")
+    http_requests.post(f"{api}/editMessageText", json={
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": original_text + "\n\n~Ignorado~",
+        "parse_mode": "Markdown",
+    })
 
     return jsonify({"ok": True})
 

@@ -164,3 +164,77 @@ class SanatorioClient:
             if msgs:
                 logger.info(f"  Validation messages: {msgs}")
         return slots[0] if slots else None
+
+    def get_available_slots(self, id_servicio: int, id_sucursal: int,
+                            id_recurso: int, id_especialidad: int,
+                            id_tipo_recurso: int, prestacion_ids: list[int],
+                            first_available: dict, fecha_hasta: str) -> list[dict]:
+        """Get all available slots from the first available date up to fecha_hasta.
+
+        Args:
+            first_available: Slot dict returned by get_first_available().
+            fecha_hasta: End date in MM-DD-YYYY format.
+
+        Returns:
+            Sorted list of {'date': 'YYYY-MM-DD', 'times': ['HH:MM', ...]}.
+        """
+        # Derive FechaDesde from first_available's Fecha
+        fecha_raw = first_available["Fecha"]  # e.g. "2026-04-06T00:00:00-03:00"
+        date_part = fecha_raw.split("T")[0]   # "2026-04-06"
+        y, m, d = date_part.split("-")
+        fecha_desde = f"{m}-{d}-{y}"
+
+        # Top-level dates use no leading zeros (M-D-YYYY)
+        fecha_desde_short = f"{int(m)}-{int(d)}-{y}"
+        fecha_hasta_parts = fecha_hasta.split("-")
+        fecha_hasta_short = f"{int(fecha_hasta_parts[0])}-{int(fecha_hasta_parts[1])}-{fecha_hasta_parts[2]}"
+
+        payload = {
+            "CriterioBusquedaDto": {
+                "IdPaciente": self.patient_id,
+                "IdServicio": id_servicio,
+                "IdSucursal": id_sucursal,
+                "IdRecurso": id_recurso,
+                "IdEspecialidad": id_especialidad,
+                "ControlarEdad": True,
+                "EdadPaciente": self.patient_age,
+                "SexoPaciente": self.patient_sex,
+                "IdTipoDeTurno": first_available.get("IdTipoTurnoRecomendado", 2),
+                "IdFinanciador": self.financiador_id,
+                "IdTipoRecurso": id_tipo_recurso,
+                "IdPlan": self.plan_id,
+                "Prestaciones": [
+                    {"IdPrestacion": pid, "IdItemSolicitudEstudios": 0}
+                    for pid in prestacion_ids
+                ],
+                "IdSistemaCliente": 2,
+                "IdTipoBusqueda": 1,
+                "FechaDesde": fecha_desde,
+                "FechaHasta": fecha_hasta,
+            },
+            "PrimerosAsignablesDto": {
+                "PrimerosTurnosDeCadaRecurso": [first_available],
+                "MensajesValidacion": [],
+            },
+            "FechaDesde": fecha_desde_short,
+            "FechaHasta": fecha_hasta_short,
+        }
+        resp = self.session.post(
+            f"{API_URL}DisponibilidadDeTurnos/ObtenerTurnosDisponiblesParaPortalConParticular",
+            json=payload,
+        )
+        logger.debug(f"  All slots response ({resp.status_code}): {resp.text[:2000]}")
+        resp.raise_for_status()
+        data = resp.json()
+
+        result = []
+        for resource in data:
+            for day in resource.get("SituacionesPorDia", []):
+                slots = day.get("TurnosAsignables", [])
+                if not slots:
+                    continue
+                fecha = day["Fecha"].split("T")[0]
+                times = sorted(set(s["Hora"] for s in slots))
+                result.append({"date": fecha, "times": times})
+
+        return sorted(result, key=lambda d: d["date"])

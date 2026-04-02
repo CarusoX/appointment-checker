@@ -45,21 +45,10 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None,
         logger.info("No upcoming appointments to check")
         return []
 
-    # Load dismissed appointments for this user's chat
-    dismissed_ids = set()
-    if storage and notifier:
-        dismissed_ids = storage.get_dismissed_ids(notifier.chat_id)
-        if dismissed_ids:
-            logger.info(f"Dismissed appointment IDs: {dismissed_ids}")
-
     findings = []
 
     for appt in appointments:
         appt_id = appt["Id"]
-
-        if appt_id in dismissed_ids:
-            logger.info(f"Skipping dismissed appointment {appt_id}")
-            continue
         doctor_name = appt["Recurso"]
         doctor_id = appt["IdRecurso"]
         tipo_recurso = appt["IdTipoRecurso"]
@@ -130,7 +119,10 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None,
                 continue
             prest_combos = [[pid] for pid in non_tele]
             logger.debug(f"  No exact prestacion match for '{appt_prestacion}', trying each: {prest_combos}")
+
+        # Find first available slot
         first = None
+        successful_combo = None
         for combo in prest_combos:
             logger.debug(f"  Trying availability: recurso={doctor_id}, especialidad={especialidad_id}, "
                          f"servicio={servicio_id}, sucursal={sucursal_id}, prestaciones={combo}")
@@ -143,6 +135,7 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None,
                 prestacion_ids=combo,
             )
             if first:
+                successful_combo = combo
                 break
 
         if not first:
@@ -150,36 +143,68 @@ def run_check(client: SanatorioClient, notifier: TelegramNotifier | None = None,
             continue
 
         first_date = parse_date(first["Fecha"])
-        first_time = first.get("Hora", "")
-
         if not first_date:
             continue
 
-        logger.info(f"  First available: {first_date} {first_time}")
+        logger.info(f"  First available: {first_date}")
 
-        if first_date < appt_date:
-            finding = {
-                "doctor": doctor_name,
-                "service": appt["Servicio"],
-                "location": appt["Sucursal"],
-                "current_date": appt_date.isoformat(),
-                "current_time": appt_time,
-                "new_date": first_date.isoformat(),
-                "new_time": first_time,
-            }
-            findings.append(finding)
-            logger.info(f"  EARLIER SLOT FOUND!")
-
-            if notifier:
-                notifier.send_appointment_found(
-                    doctor=doctor_name,
-                    current_date=appt_date.strftime("%d/%m/%Y"),
-                    new_date=first_date.strftime("%d/%m/%Y"),
-                    new_time=first_time,
-                    appointment_id=appt_id,
-                )
-        else:
+        if first_date >= appt_date:
             logger.info(f"  No earlier date available (first is {first_date})")
+            continue
+
+        # Fetch ALL available slots up to the appointment date
+        fecha_hasta = appt_date.strftime("%m-%d-%Y")
+        all_slots = client.get_available_slots(
+            id_servicio=servicio_id,
+            id_sucursal=sucursal_id,
+            id_recurso=doctor_id,
+            id_especialidad=especialidad_id,
+            id_tipo_recurso=tipo_recurso,
+            prestacion_ids=successful_combo,
+            first_available=first,
+            fecha_hasta=fecha_hasta,
+        )
+
+        # Keep only dates strictly before the appointment
+        earlier = [s for s in all_slots if date.fromisoformat(s["date"]) < appt_date]
+
+        # Filter out dismissed dates
+        dismissed_dates = set()
+        if storage and notifier:
+            dismissed_dates = storage.get_dismissed_dates(notifier.chat_id, appt_id)
+            if dismissed_dates:
+                logger.info(f"  Dismissed dates: {dismissed_dates}")
+
+        available = [s for s in earlier if s["date"] not in dismissed_dates]
+
+        if not available:
+            logger.info(f"  All earlier dates dismissed or none found")
+            continue
+
+        logger.info(f"  EARLIER SLOTS FOUND: {len(available)} day(s)")
+        for day in available:
+            logger.info(f"    {day['date']}: {', '.join(day['times'])}")
+
+        finding = {
+            "doctor": doctor_name,
+            "service": appt["Servicio"],
+            "location": appt["Sucursal"],
+            "current_date": appt_date.isoformat(),
+            "current_time": appt_time,
+            "available_days": available,
+        }
+        findings.append(finding)
+
+        if notifier:
+            notifier.send_available_slots(
+                doctor=doctor_name,
+                service=appt["Servicio"],
+                location=appt["Sucursal"],
+                current_date=appt_date,
+                current_time=appt_time,
+                available_days=available,
+                appointment_id=appt_id,
+            )
 
     if not findings:
         logger.info("No earlier appointments found")
